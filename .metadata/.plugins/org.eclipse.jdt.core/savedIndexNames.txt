@@ -1,0 +1,1 @@
+INDEX VERSION 1.126+C:\Users\Rechner\Documents\GitHub\Lejos_PI_Handy\.metadata\.plugins\org.eclipse.jdt.core
