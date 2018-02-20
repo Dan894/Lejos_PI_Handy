@@ -1,0 +1,320 @@
+package com.example.ravenscheller.myapplication;
+
+import android.app.Activity;
+import android.graphics.Color;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.os.Bundle;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.widget.Button;
+import android.widget.TextView;
+
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.hardware.Sensor;
+import android.hardware.SensorManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemClickListener;
+import android.widget.ListView;
+import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import BluetoothSocket.MyBluetoothSocket;
+
+
+public class MainActivity extends MyAppCompatActivity implements SensorEventListener{
+
+    public TextView xText, yText, zText;
+    public Sensor mySensor;
+    public SensorManager SM;
+
+    //private final static int HANDLER_STRING_MESSAGE = 0x100;
+
+    private final static int REQUEST_FOR_RESULT_BT = 0x10;
+    private final static int REQUEST_FOR_RESULT_DB = 0x20;
+    private final static int HANDLER_STRING_MESSAGE = 0x100;
+    private SensorManager mSensorManager;
+    private static final int[] MY_MOTION_SENSORS = {Sensor.TYPE_ACCELEROMETER, Sensor.TYPE_ACCELEROMETER_UNCALIBRATED,
+            Sensor.TYPE_GRAVITY, Sensor.TYPE_GYROSCOPE, Sensor.TYPE_GYROSCOPE_UNCALIBRATED, Sensor.TYPE_LINEAR_ACCELERATION,
+            Sensor.TYPE_ROTATION_VECTOR};
+    private static final int[] MY_POS_SENSORS = {Sensor.TYPE_MAGNETIC_FIELD, Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED};
+    private static final int[] MY_ENV_SENSORS = {Sensor.TYPE_AMBIENT_TEMPERATURE, Sensor.TYPE_PRESSURE};
+
+
+
+
+    private final Handler _HANDLER = new Handler() {
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case MyBluetoothSocket.STATE_CONNECTED:
+                    Toast.makeText(MainActivity.this, "Connected", Toast.LENGTH_SHORT).show();
+                    break;
+                case MyBluetoothSocket.STATE_CONNECTING:
+                    Toast.makeText(MainActivity.this, "Connecting", Toast.LENGTH_SHORT).show();
+                    break;
+                case MyBluetoothSocket.STATE_NONE:
+                    Toast.makeText(MainActivity.this, "None", Toast.LENGTH_SHORT).show();
+                    break;
+                case MainActivity.HANDLER_STRING_MESSAGE:
+                    Log.i("NMEA", (String) msg.obj);
+
+            }
+        }
+    };
+    private MyBluetoothSocket.MyBluetoothSocketListener mBtSocketListener = new MyBluetoothSocket.MyBluetoothSocketListener() {
+        @Override
+        public void onStateChanged(int state) {
+            _HANDLER.obtainMessage(state).sendToTarget();
+        }
+
+        @Override
+        public void onMessage(String message) {
+            _HANDLER.obtainMessage(MainActivity.HANDLER_STRING_MESSAGE, message).sendToTarget();
+        }
+
+        @Override
+        public void onMessage(byte[] message) {
+
+        }
+    };
+
+    /*public static MyBluetoothSocket mBtSocket = new MyBluetoothSocket("MyBluetoothSocket");
+    private int currentProjectID = -1;*/
+
+    public MyBluetoothSocket mBtSocket = new MyBluetoothSocket("MyBluetoothSocket");
+    public Button btButton;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        // Create our Sensor Manager
+        SM = (SensorManager)getSystemService(SENSOR_SERVICE);
+
+        // Accelerometer Sensor
+        mySensor = SM.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+
+        // Register sensor Listener
+        SM.registerListener(this, mySensor, SensorManager.SENSOR_DELAY_NORMAL);
+
+        // Assign TextView
+        // zText wird nur als Ausgabekonsole für die Fahrtrichtung benutzt
+        // die z-Wert Beschleunigungsdaten werden gar nicht erst angezeigt, weil nicht gebraucht
+        xText = (TextView)findViewById(R.id.xText);
+        yText = (TextView)findViewById(R.id.yText);
+        zText = (TextView)findViewById(R.id.zText);
+
+
+        btButton = (Button) findViewById(R.id.btButton);
+        btButton.setOnClickListener(new View.OnClickListener() {
+
+            @Override
+            public void onClick(View view) {
+                mBtSocket.setListener(mBtSocketListener);
+                mBtSocket.connect("F4-06-69-27-63-51");
+            }
+        });
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
+        // Not in use
+    }
+
+    @Override
+    public void onSensorChanged(SensorEvent event) {
+
+        // Faktoren für die Neigungswerte
+        int xfactor = 100;
+        int yfactor = 100;
+
+        // Beschleunigungs-Rohdaten
+        float xRaw = event.values[0];
+        float yRaw = event.values[1];
+        float zRaw = event.values[2];
+
+        // Beschleunigungsdaten in int
+        int x = ((int) (xfactor * (event.values[0] / 9.81)));
+        int y = ((int) (yfactor * (event.values[1] / 9.81)));
+
+        //aus Minus Plus machen
+        if (xRaw < 0) {
+            x = x * -1;
+        }
+        if (yRaw < 0) {
+            y = y * -1;
+        }
+
+
+        //direction
+        int dir;
+
+        //rückwärts
+        if (-xRaw < -1 & yRaw < -1) {
+            dir = 10;
+        }
+        else if (-xRaw < -1 & yRaw >= -1 & yRaw <= 1) {
+            dir = 2;
+        }
+        else if (-xRaw < -1 & yRaw > 1) {
+            dir = 6;
+        }
+
+        //steht
+        else  if (-xRaw >= -1 & -xRaw <= 1) {
+            dir = 0;
+        }
+
+        //vorwärts
+        else if (-xRaw > 1 & yRaw < -1) {
+            dir = 9;
+        }
+        else if (-xRaw > 1 & yRaw >= -1 & yRaw <= 1) {
+            dir = 1;
+        }
+        else if (-xRaw > 1 & yRaw > 1){
+            dir = 5;
+        }
+        else dir = 0;
+
+
+        // Wenn man die Daten als Int (enthält 32bit) versenden will:
+
+        int xshift = x << 18;
+        int yshift = y << 4;
+        int zshift = dir;
+
+        int wholeInteger = xshift + yshift + zshift;
+        String wholeIntegerBin = Integer.toBinaryString(wholeInteger);
+
+        if(mBtSocket.getState() == MyBluetoothSocket.STATE_CONNECTED)
+            mBtSocket.write(wholeInteger);
+
+
+
+        // Wenn man die Daten als byteArray versenden will:
+
+        /*byte byteX = (byte) x;
+        byte byteY = (byte) y;
+        byte byteDir = (byte) dir;
+
+        byte[] byteArray = new byte[3];
+        byteArray [0] = byteX;
+        byteArray [1] = byteY;
+        byteArray [2] = byteDir;
+
+        if(mBtSocket.getState() == MyBluetoothSocket.STATE_CONNECTED)
+            mBtSocket.onMessage(byteArray);*/
+
+
+
+
+
+        // Motoren
+       /* int leftMotorSpeed;
+        int rightMotorSpeed;
+
+        // Bei Linkskurve rechter Reifen schneller, linker Reifen unverändert
+        if (yRaw < 0) {
+            leftMotorSpeed = x;
+            rightMotorSpeed = x + y;
+        }
+
+        // Bei Rechtskurve linker Reifen schneller, rechter Reifen unverändert
+        else {
+            leftMotorSpeed = x + y;
+            rightMotorSpeed = x;
+        }
+        */
+
+        // Ausgabe von Beschleunigungsdaten ohne Fahrtrichtungsangabe
+        //xText.setText("ByteArray1: " + byteArray);
+        //yText.setText("ByteArray2: " + byteX + " " + byteY + " " + byteDir);
+        xText.setText("Int: " + wholeInteger);
+        yText.setText("Int Bin: " + wholeIntegerBin);
+
+
+        // Ausgabe von Beschleunigungsdaten mit Fahrtrichtungsangabe
+        // Stillstand
+        if (xRaw >= -1 & xRaw <= 1) {
+            zText.setText("Roboter steht");
+            zText.setTextColor(Color.DKGRAY);
+        }
+
+        // rückwärts
+        if (-xRaw < -1 & yRaw < 1) {
+            zText.setText("rückwärts links");
+            zText.setTextColor(Color.RED);
+        }
+        if (-xRaw < -1 & yRaw >= -1 & yRaw <= 1) {
+            zText.setText("rückwärts geradeaus");
+            zText.setTextColor(Color.RED);
+        }
+        if (-xRaw < -1 & yRaw > 1) {
+            zText.setText("rückwärts rechts");
+            zText.setTextColor(Color.RED);
+        }
+
+        // vorwärts
+        if (-xRaw > 1 & yRaw < -1) {
+            zText.setText("vorwärts links");
+            zText.setTextColor(Color.BLUE);
+        }
+        if (-xRaw > 1 & yRaw >= -1 & yRaw <= 1) {
+            zText.setText("vorwärts geradeaus");
+            zText.setTextColor(Color.BLUE);
+        }
+        if (-xRaw > 1 & yRaw > 1) {
+            zText.setText("vorwärts rechts");
+            zText.setTextColor(Color.BLUE);
+        }
+
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.menu_main, menu);
+        return true;
+    }
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        Intent i;
+        switch (item.getItemId()) {
+            case R.id.on_bluetooth:
+                Log.i("MySensorViewer", "Call Bluetooth Activity");
+                i = new Intent(MainActivity.this, BluetoothActivity.class);
+                startActivityForResult(i, MainActivity.REQUEST_FOR_RESULT_BT);
+                return true;
+                /*case R.id.on_network:
+                    Log.i("MySensorViewer","Call Network Activity");
+                    i = new Intent(MainActivity.this,MapActivity.class);
+                    i.putExtra(MyAppCompatActivity.SP_LAST_PROJECT_ID, currentProjectID);
+                    startActivity(i);
+                    return true;
+                case R.id.db:
+                    Log.i("MySensorViewer","Call Project Activity");
+                    i = new Intent(MainActivity.this,ProjectActivity.class);
+                    startActivityForResult(i,MainActivity.REQUEST_FOR_RESULT_DB);
+                    return true;*/
+            default:
+                return super.onOptionsItemSelected(item);
+        }
+    }
+}
