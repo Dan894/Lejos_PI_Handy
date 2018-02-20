@@ -1,0 +1,244 @@
+package BluetoothSocket;
+
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
+import android.util.Log;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.ByteArrayOutputStream;
+
+import java.util.UUID;
+
+
+/**
+ * Created by oem on 14.11.17.
+ * @author Lukasz Rojek
+ *
+ * Die Bluetooth-Socket-Klasse erstellt die Verbindung zu dem Bluetooth-Gerät und ermöglicht
+ * den zweiseitigen Datenaustausch. Der Verbindungsstatus und die empfangenen Daten werden über den
+ * Bluetooth-Listener zur Verfügung gestellt.
+ */
+
+public class MyBluetoothSocket {
+
+    private MyBluetoothConnectionThread mBluetoothConnectionThread = null;
+    private MyBluetoothCommunicationThread mBluetoothCommunicationThread = null;
+    private final BluetoothAdapter BT_ADAPTER = BluetoothAdapter.getDefaultAdapter();
+    private MyBluetoothSocketListener mBluetoothSocketListener = null;
+
+    private int mState = -1;
+    private String name = null;
+
+    public static final int STATE_CONNECTED = 0x30;
+    public static final int STATE_CONNECTING = 0x20;
+    public static final int STATE_NONE = 0x10;
+
+    public MyBluetoothSocket(String name) {
+        this(null, name);
+    }
+
+    public MyBluetoothSocket(MyBluetoothSocketListener listener, String name) {
+        this.mBluetoothSocketListener = listener;
+        this.name = name;
+    }
+
+    public void setListener(MyBluetoothSocketListener listener){
+        this.mBluetoothSocketListener = listener;
+    }
+
+    private synchronized void setState(int state) {
+        this.mState = state;
+        if (this.mBluetoothSocketListener != null) {
+            this.mBluetoothSocketListener.onStateChanged(state);
+        }
+    }
+
+    public int getState(){
+        return this.mState;
+    }
+
+    private void onMessage(String message) {
+        if (this.mBluetoothSocketListener != null) {
+            this.mBluetoothSocketListener.onMessage(message);
+        }
+    }
+
+    public void onMessage(byte[] message) {
+        if (this.mBluetoothSocketListener != null) {
+            this.mBluetoothSocketListener.onMessage(message);
+        }
+    }
+
+    public boolean write(int msg){
+        if(this.mBluetoothCommunicationThread != null){
+            return this.mBluetoothCommunicationThread.write(msg);
+        }
+        return false;
+    }
+
+    public void connect(String mac) {
+        BluetoothDevice device = BT_ADAPTER.getRemoteDevice(mac);
+        if (this.mState == MyBluetoothSocket.STATE_CONNECTING && this.mBluetoothConnectionThread != null) {
+            this.mBluetoothConnectionThread.cancel();
+            this.mBluetoothConnectionThread = null;
+        }
+
+        if (this.mBluetoothCommunicationThread != null) {
+            this.mBluetoothCommunicationThread.cancel();
+            this.mBluetoothCommunicationThread = null;
+        }
+
+        this.mBluetoothConnectionThread = new MyBluetoothConnectionThread(device);
+        this.setState(MyBluetoothSocket.STATE_CONNECTING);
+        this.mBluetoothConnectionThread.start();
+    }
+
+    private void connected(BluetoothSocket socket) {
+        if (this.mBluetoothConnectionThread != null) {
+            this.mBluetoothConnectionThread.cancel();
+            this.mBluetoothConnectionThread = null;
+        }
+
+        if (this.mBluetoothCommunicationThread != null) {
+            this.mBluetoothCommunicationThread.cancel();
+            this.mBluetoothCommunicationThread = null;
+        }
+
+        this.mBluetoothCommunicationThread = new MyBluetoothCommunicationThread(socket);
+        this.mBluetoothCommunicationThread.start();
+        this.setState(MyBluetoothSocket.STATE_CONNECTED);
+    }
+
+    public void stop() {
+        if (this.mBluetoothConnectionThread != null) {
+            this.mBluetoothConnectionThread.cancel();
+            this.mBluetoothConnectionThread = null;
+        }
+
+        if (this.mBluetoothCommunicationThread != null) {
+            this.mBluetoothCommunicationThread.cancel();
+            this.mBluetoothCommunicationThread = null;
+        }
+        this.setState(MyBluetoothSocket.STATE_NONE);
+    }
+
+    private class MyBluetoothConnectionThread extends Thread {
+        private final BluetoothSocket BT_SOCKET;
+        private final UUID _UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+
+        public MyBluetoothConnectionThread(BluetoothDevice device) {
+            BluetoothSocket tmpBtSocket = null;
+            try {
+                tmpBtSocket = device.createRfcommSocketToServiceRecord(this._UUID);
+            } catch (IOException e) {
+                Log.e(MyBluetoothSocket.this.name, "IOException on Create RFCOMM");
+            }
+            this.BT_SOCKET = tmpBtSocket;
+        }
+
+        @Override
+        public void run() {
+            super.run();
+            try {
+                this.BT_SOCKET.connect();
+            } catch (IOException e) {
+                Log.e(MyBluetoothSocket.this.name, "Connection Failed !" + e.getMessage());
+                try {
+                    this.BT_SOCKET.close();
+                } catch (IOException e2) {
+                    Log.e(MyBluetoothSocket.this.name, "Closing Failed !" + e2.getMessage());
+                }
+                MyBluetoothSocket.this.stop();
+                return;
+            }
+
+            MyBluetoothSocket.this.setState(MyBluetoothSocket.STATE_CONNECTED);
+            synchronized (MyBluetoothSocket.this) {
+                MyBluetoothSocket.this.mBluetoothConnectionThread = null;
+            }
+            MyBluetoothSocket.this.connected(this.BT_SOCKET);
+        }
+
+        public void cancel() {
+            try {
+                this.BT_SOCKET.close();
+            } catch (IOException e) {
+
+            }
+        }
+    }
+
+    private class MyBluetoothCommunicationThread extends Thread {
+        private final BufferedReader BUFFERED_READER;
+        private final OutputStreamWriter OUTPUT_STREAM_WRITER;
+        private final InputStream INPUT_STREAM;
+        private final OutputStream OUTPUT_STREAM;
+        private final BluetoothSocket BT_SOCKET;
+
+        public MyBluetoothCommunicationThread(BluetoothSocket socket) {
+            this.BT_SOCKET = socket;
+            InputStream tmpIS = null;
+            OutputStream tmpOS = null;
+            try {
+                tmpIS = this.BT_SOCKET.getInputStream();
+                tmpOS = this.BT_SOCKET.getOutputStream();
+            } catch (IOException e) {
+                // Errors
+            }
+            this.INPUT_STREAM = tmpIS;
+            this.OUTPUT_STREAM = tmpOS;
+            this.BUFFERED_READER = new BufferedReader(new InputStreamReader(this.INPUT_STREAM));
+            this.OUTPUT_STREAM_WRITER = new OutputStreamWriter(this.OUTPUT_STREAM);
+        }
+
+        @Override
+        public void run() {
+            super.run();
+            String msg;
+            while (true) {
+                try {
+                    msg = this.BUFFERED_READER.readLine();
+                    MyBluetoothSocket.this.onMessage(msg);
+                } catch (IOException e) {
+                    Log.e(MyBluetoothSocket.this.name, "Read Line failed !");
+                    MyBluetoothSocket.this.stop();
+                    break;
+                }
+            }
+        }
+
+        public boolean write(int msg) {
+            try {
+                this.OUTPUT_STREAM.write(msg);
+                return true;
+            }catch(IOException e){
+                return false;
+            }
+        }
+
+        public void cancel() {
+            try {
+                this.BUFFERED_READER.close();
+                this.OUTPUT_STREAM_WRITER.close();
+                this.INPUT_STREAM.close();
+                this.OUTPUT_STREAM.close();
+                this.BT_SOCKET.close();
+            } catch (IOException e) {
+                Log.e(MyBluetoothSocket.this.name, "Closing Failed !");
+
+            }
+        }
+    }
+
+    public interface MyBluetoothSocketListener {
+        void onStateChanged(int state);
+        void onMessage(String message);
+        void onMessage(byte[] message);
+    }
+}
